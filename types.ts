@@ -50,3 +50,12 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
   message: string;
 }
+
+export interface ChallengeRecord {
+  id: string;
+  movieId: string;
+  movieTitle: string;
+  posterPath: string;
+  completedAt: number;
+  ratingGiven: number;
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import html2canvas from 'html2canvas';
-import { ViewMode, Movie, SearchResult, SortOption, StreamingPlatform, ToastMessage } from './types';
+import { ViewMode, Movie, SearchResult, SortOption, StreamingPlatform, ToastMessage, ChallengeRecord } from './types';
 import { searchMovies, getRecommendations } from './services/geminiService';
 import RatingModal from './components/RatingModal';
 import { 
@@ -24,7 +24,10 @@ import {
   IconUpload,
   IconSettings,
   IconEdit,
-  IconEyeOff
+  IconEyeOff,
+  IconTrophy,
+  IconTarget,
+  IconMedal
 } from './components/Icons';
 
 // --- Constants & Types ---
@@ -121,6 +124,10 @@ const App: React.FC = () => {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [tmdbKey, setTmdbKey] = useState("");
   
+  // Challenge Mode State
+  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
+  const [challengeHistory, setChallengeHistory] = useState<ChallengeRecord[]>([]);
+
   // Search
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -166,11 +173,26 @@ const App: React.FC = () => {
     }
     const savedKey = localStorage.getItem('cinecasal_tmdb_key');
     if (savedKey) setTmdbKey(savedKey);
+    
+    const savedChallenges = localStorage.getItem('cinecasal_challenges');
+    if (savedChallenges) setChallengeHistory(JSON.parse(savedChallenges));
+    
+    const savedActiveChallenge = localStorage.getItem('cinecasal_active_challenge');
+    if (savedActiveChallenge) setActiveChallengeId(savedActiveChallenge);
   }, []);
 
   useEffect(() => {
     localStorage.setItem('cinecasal_data', JSON.stringify(movies));
   }, [movies]);
+
+  useEffect(() => {
+    localStorage.setItem('cinecasal_challenges', JSON.stringify(challengeHistory));
+  }, [challengeHistory]);
+
+  useEffect(() => {
+    if (activeChallengeId) localStorage.setItem('cinecasal_active_challenge', activeChallengeId);
+    else localStorage.removeItem('cinecasal_active_challenge');
+  }, [activeChallengeId]);
 
   // Debounce Search
   useEffect(() => {
@@ -241,11 +263,31 @@ const App: React.FC = () => {
   const removeMovie = (id: string) => {
     if(confirm("Tem certeza que deseja remover este filme?")) {
       setMovies(prev => prev.filter(m => m.id !== id));
+      if (activeChallengeId === id) setActiveChallengeId(null);
       addToast('info', 'Filme removido.');
     }
   };
 
   const handleRateMovie = (id: string, rating: number, review: string) => {
+    let challengeWon = false;
+    
+    // Check if winning a challenge
+    if (activeChallengeId === id) {
+      challengeWon = true;
+      const movie = movies.find(m => m.id === id);
+      if (movie) {
+        setChallengeHistory(prev => [{
+          id: crypto.randomUUID(),
+          movieId: movie.id,
+          movieTitle: movie.title,
+          posterPath: movie.imageUrl,
+          completedAt: Date.now(),
+          ratingGiven: rating
+        }, ...prev]);
+      }
+      setActiveChallengeId(null);
+    }
+
     setMovies(prev => prev.map(m => {
       if (m.id === id) {
         return {
@@ -258,7 +300,12 @@ const App: React.FC = () => {
       }
       return m;
     }));
-    addToast('success', 'Avaliação salva com sucesso!');
+
+    if (challengeWon) {
+      addToast('success', 'DESAFIO CUMPRIDO! 🏆 Conquista registrada!');
+    } else {
+      addToast('success', 'Avaliação salva com sucesso!');
+    }
     setCurrentView(ViewMode.RATED);
   };
 
@@ -290,8 +337,25 @@ const App: React.FC = () => {
     setBattleMovies([winner, nextChallenger]);
   };
 
+  const startChallenge = () => {
+    const candidates = movies.filter(m => !m.isWatched);
+    if (candidates.length === 0) {
+      addToast('error', 'Sua lista está vazia! Adicione filmes primeiro.');
+      return;
+    }
+    const challenge = candidates[Math.floor(Math.random() * candidates.length)];
+    setActiveChallengeId(challenge.id);
+    addToast('info', 'Desafio iniciado! Boa sorte!');
+  };
+
+  const cancelChallenge = () => {
+    if(confirm('Desistir do desafio atual?')) {
+      setActiveChallengeId(null);
+    }
+  };
+
   const exportData = () => {
-    const dataStr = JSON.stringify(movies, null, 2);
+    const dataStr = JSON.stringify({ movies, challenges: challengeHistory }, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -309,8 +373,9 @@ const App: React.FC = () => {
     reader.onload = (e) => {
       try {
         const json = JSON.parse(e.target?.result as string);
-        if (Array.isArray(json)) {
-          setMovies(json);
+        if (json.movies || Array.isArray(json)) {
+          setMovies(json.movies || json);
+          if (json.challenges) setChallengeHistory(json.challenges);
           addToast('success', 'Dados importados com sucesso!');
           setCurrentView(ViewMode.DASHBOARD);
         } else {
@@ -365,6 +430,8 @@ const App: React.FC = () => {
 
   const rawWatchedMovies = useMemo(() => movies.filter(m => m.isWatched), [movies]);
   const rawWatchList = useMemo(() => movies.filter(m => !m.isWatched), [movies]);
+  
+  const activeChallengeMovie = useMemo(() => movies.find(m => m.id === activeChallengeId), [movies, activeChallengeId]);
 
   const sortedWatchlist = useMemo(() => {
     let filtered = rawWatchList;
@@ -415,6 +482,79 @@ const App: React.FC = () => {
         </h1>
         <p className="text-slate-400">Aqui está o resumo da jornada cinematográfica de vocês.</p>
         {!tmdbKey && <div className="p-2 bg-yellow-500/20 text-yellow-300 text-xs rounded-lg inline-block cursor-pointer" onClick={() => setCurrentView(ViewMode.SETTINGS)}>⚠️ Configure a API Key em Ajustes para buscar filmes</div>}
+      </div>
+
+      {/* Challenge Mode Section */}
+      <div className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-3xl p-1 border border-indigo-500/30 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-3 opacity-20"><IconTrophy className="w-32 h-32 text-indigo-400" /></div>
+        <div className="bg-slate-900/50 backdrop-blur-md rounded-[22px] p-6">
+           <div className="flex flex-col md:flex-row gap-6 items-center">
+             
+             {/* Active Challenge Card */}
+             <div className="flex-1 w-full">
+                <div className="flex items-center gap-2 mb-4">
+                  <IconTarget className="w-6 h-6 text-rose-500" />
+                  <h2 className="text-xl font-bold text-white uppercase tracking-wider">Desafio Atual</h2>
+                </div>
+                
+                {activeChallengeMovie ? (
+                  <div className="flex gap-4 bg-slate-800 p-4 rounded-xl border border-rose-500/50 relative overflow-hidden group">
+                     <div className="absolute inset-0 bg-rose-500/5 group-hover:bg-rose-500/10 transition-colors"></div>
+                     <img src={getImageUrl(activeChallengeMovie.imageUrl)} crossOrigin="anonymous" onError={handleImageError} className="w-20 h-28 object-cover rounded-lg shadow-lg z-10" />
+                     <div className="flex flex-col justify-center z-10 flex-1">
+                        <h3 className="text-lg font-bold text-white">{activeChallengeMovie.title}</h3>
+                        <p className="text-slate-400 text-sm mb-3">Vocês precisam assistir isso!</p>
+                        <div className="flex gap-2">
+                           <button onClick={() => setRatingModalMovie(activeChallengeMovie)} className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-all">
+                              <IconCheck className="w-4 h-4" /> Marcar Visto
+                           </button>
+                           <button onClick={cancelChallenge} className="text-slate-500 hover:text-slate-300 text-xs px-2">Desistir</button>
+                        </div>
+                     </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-800/50 p-6 rounded-xl border border-dashed border-slate-600 flex flex-col items-center justify-center text-center gap-3">
+                     <p className="text-slate-400 text-sm">Sem desafio ativo no momento.</p>
+                     <button onClick={startChallenge} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded-xl font-bold shadow-lg shadow-indigo-500/20 flex items-center gap-2">
+                        <IconTarget className="w-4 h-4" /> Iniciar Novo Desafio
+                     </button>
+                  </div>
+                )}
+             </div>
+
+             {/* History / Stats */}
+             <div className="flex-1 w-full border-t md:border-t-0 md:border-l border-slate-700 md:pl-6 pt-6 md:pt-0">
+                <div className="flex items-center justify-between mb-4">
+                   <div className="flex items-center gap-2">
+                     <IconMedal className="w-6 h-6 text-yellow-500" />
+                     <h2 className="text-lg font-bold text-white">Conquistas</h2>
+                   </div>
+                   <span className="text-2xl font-black text-yellow-500">{challengeHistory.length}</span>
+                </div>
+                {challengeHistory.length > 0 ? (
+                  <div className="space-y-3 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                     {challengeHistory.slice(0, 4).map(h => (
+                        <div key={h.id} className="flex items-center gap-3 bg-slate-800 p-2 rounded-lg border border-slate-700/50">
+                           <div className="w-8 h-10 bg-slate-700 rounded overflow-hidden shrink-0">
+                              <img src={getImageUrl(h.posterPath)} className="w-full h-full object-cover opacity-80" />
+                           </div>
+                           <div className="min-w-0 flex-1">
+                              <h4 className="text-slate-200 text-sm font-medium truncate">{h.movieTitle}</h4>
+                              <p className="text-[10px] text-slate-500">{new Date(h.completedAt).toLocaleDateString()}</p>
+                           </div>
+                           <div className="flex text-yellow-500 gap-0.5 text-[10px]">
+                              {h.ratingGiven}★
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+                ) : (
+                   <p className="text-slate-500 text-xs italic text-center py-8">Complete desafios para encher sua galeria de troféus!</p>
+                )}
+             </div>
+
+           </div>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -562,6 +702,11 @@ const App: React.FC = () => {
             <div className="relative h-48">
               <img src={getImageUrl(movie.imageUrl)} crossOrigin="anonymous" onError={handleImageError} loading="lazy" decoding="async" className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-900 to-transparent" />
+              {activeChallengeId === movie.id && (
+                <div className="absolute top-2 left-2 bg-rose-600 text-white text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1 shadow-lg animate-pulse">
+                   <IconTarget className="w-3 h-3"/> Desafio Ativo
+                </div>
+              )}
               <div className="absolute bottom-3 left-4 right-4 flex justify-between items-end">
                 <div>
                   <h3 className="text-xl font-bold text-white shadow-black drop-shadow-md truncate w-48">{movie.title}</h3>
