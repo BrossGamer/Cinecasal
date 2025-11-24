@@ -1,0 +1,5 @@
+{
+  "name": "CineCasal",
+  "description": "Um painel interativo para casais organizarem sua lista de filmes para assistir e avaliarem os que já viram juntos, alimentado por IA.",
+  "requestFramePermissions": []
+}
